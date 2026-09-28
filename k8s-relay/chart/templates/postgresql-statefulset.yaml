@@ -1,0 +1,110 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "k8s-deployer.postgresqlName" . }}
+  labels:
+    {{- include "k8s-deployer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  serviceName: {{ include "k8s-deployer.postgresqlName" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "k8s-deployer.postgresqlSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "k8s-deployer.postgresqlSelectorLabels" . | nindent 8 }}
+      {{- if .Values.postgresql.configuration }}
+      annotations:
+        checksum/postgresql-config: {{ include (print $.Template.BasePath "/postgresql-configmap.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.postgresql.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          args:
+            - -c
+            - port={{ .Values.postgresql.service.port }}
+            {{- if .Values.postgresql.configuration }}
+            - -c
+            - config_file=/etc/postgresql/postgresql.conf
+            {{- end }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/postgresql-auth/password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgresql
+              containerPort: {{ .Values.postgresql.service.port }}
+              protocol: TCP
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            periodSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            periodSeconds: 5
+            failureThreshold: 3
+          {{- with .Values.postgresql.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: auth
+              mountPath: /run/postgresql-auth
+              readOnly: true
+            {{- if .Values.postgresql.configuration }}
+            - name: configuration
+              mountPath: /etc/postgresql
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: auth
+          secret:
+            secretName: {{ include "k8s-deployer.postgresqlPasswordSecretName" . }}
+            items:
+              - key: {{ if .Values.postgresql.auth.existingSecret }}{{ .Values.postgresql.auth.existingSecretPasswordKey }}{{ else }}password{{ end }}
+                path: password
+        {{- if .Values.postgresql.configuration }}
+        - name: configuration
+          configMap:
+            name: {{ include "k8s-deployer.postgresqlConfigName" . }}
+        {{- end }}
+        {{- if .Values.postgresql.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "k8s-deployer.postgresqlDataName" . }}
+        {{- else }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+{{- end }}

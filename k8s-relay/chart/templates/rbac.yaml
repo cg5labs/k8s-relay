@@ -1,0 +1,30 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "k8s-deployer.fullname" . }}
+  labels:
+    {{- include "k8s-deployer.labels" . | nindent 4 }}
+rules:
+  # create cannot be restricted by resourceNames.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: [{{ include "k8s-deployer.leaseName" . | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "k8s-deployer.fullname" . }}
+  labels:
+    {{- include "k8s-deployer.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "k8s-deployer.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "k8s-deployer.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

@@ -1,0 +1,181 @@
+{{- include "k8s-deployer.validateReplicaCount" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "k8s-deployer.fullname" . }}
+  labels:
+    {{- include "k8s-deployer.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "k8s-deployer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "k8s-deployer.selectorLabels" . | nindent 8 }}
+      {{- if .Values.metrics.enabled }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: {{ .Values.metrics.path | quote }}
+        prometheus.io/port: {{ .Values.healthPort | quote }}
+      {{- else }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "k8s-deployer.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Covers the script SIGTERM->SIGKILL grace plus lease release.
+      terminationGracePeriodSeconds: {{ add .Values.killGraceSeconds 15 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: scheduler
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LEASE_NAME
+              value: {{ include "k8s-deployer.leaseName" . | quote }}
+            - name: LEASE_DURATION
+              value: {{ .Values.leaderElection.leaseDuration | quote }}
+            - name: RENEW_DEADLINE
+              value: {{ .Values.leaderElection.renewDeadline | quote }}
+            - name: RETRY_PERIOD
+              value: {{ .Values.leaderElection.retryPeriod | quote }}
+            - name: KILL_GRACE_SECONDS
+              value: {{ .Values.killGraceSeconds | quote }}
+            - name: HEALTH_PORT
+              value: {{ .Values.healthPort | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: GIT_REPOSITORY
+              value: {{ required "git.repository is required" .Values.git.repository | quote }}
+            - name: GIT_BRANCH
+              value: {{ .Values.git.branch | quote }}
+            {{- if .Values.git.credentialSecretName }}
+            - name: GIT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.git.credentialSecretName }}
+                  key: {{ .Values.git.usernameSecretKey }}
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.git.credentialSecretName }}
+                  key: {{ .Values.git.tokenSecretKey }}
+            {{- end }}
+            - name: AUDIT_ENABLED
+              value: {{ .Values.audit.enabled | quote }}
+            {{- if .Values.audit.enabled }}
+            {{- if .Values.postgresql.enabled }}
+            - name: DB_HOST
+              value: {{ include "k8s-deployer.postgresqlName" . | quote }}
+            - name: DB_PORT
+              value: {{ .Values.postgresql.service.port | quote }}
+            - name: DB_NAME
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: DB_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            {{- else }}
+            - name: DB_HOST
+              value: {{ required "audit.database.host is required when postgresql.enabled is false" .Values.audit.database.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.audit.database.port | quote }}
+            - name: DB_NAME
+              value: {{ .Values.audit.database.name | quote }}
+            - name: DB_USER
+              value: {{ .Values.audit.database.username | quote }}
+            {{- end }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.postgresql.enabled }}
+                  name: {{ include "k8s-deployer.postgresqlPasswordSecretName" . }}
+                  {{- if .Values.postgresql.auth.existingSecret }}
+                  key: {{ .Values.postgresql.auth.existingSecretPasswordKey }}
+                  {{- else }}
+                  key: password
+                  {{- end }}
+                  {{- else }}
+                  name: {{ required "audit.database.passwordSecretName is required when using an external database" .Values.audit.database.passwordSecretName }}
+                  key: {{ .Values.audit.database.passwordSecretKey }}
+                  {{- end }}
+            {{- end }}
+            - name: JOBS_FILE
+              value: /etc/scheduler/jobs.yaml
+            - name: SCRIPTS_DIR
+              value: /opt/scripts
+          ports:
+            - name: health
+              containerPort: {{ .Values.healthPort }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: jobs
+              mountPath: /etc/scheduler
+              readOnly: true
+            - name: scripts
+              mountPath: /opt/scripts
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: jobs
+          configMap:
+            name: {{ include "k8s-deployer.fullname" . }}-jobs
+        - name: scripts
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        {{- if .Values.affinity }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "k8s-deployer.selectorLabels" . | nindent 20 }}
+        {{- end }}

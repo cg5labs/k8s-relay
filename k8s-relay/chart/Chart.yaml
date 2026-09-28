@@ -1,0 +1,6 @@
+apiVersion: v2
+name: k8s-deployer
+description: Leader-elected scheduler with optional PostgreSQL audit persistence.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

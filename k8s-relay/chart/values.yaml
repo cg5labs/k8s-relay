@@ -1,0 +1,118 @@
+replicaCount: 3
+
+image:
+  repository: k8s-deployer
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+leaderElection:
+  # Defaults to the release fullname.
+  leaseName: ""
+  leaseDuration: 17
+  renewDeadline: 15
+  retryPeriod: 5
+
+# Seconds a script gets between SIGTERM and SIGKILL when stopped.
+killGraceSeconds: 10
+logLevel: INFO
+healthPort: 8080
+
+# Rendered to jobs.yaml. Script paths are relative to the configured Git repository.
+timezone: UTC
+jobs:
+  - name: hello
+    schedule: "* * * * *"
+    script: scripts/hello.sh
+    args: ["world"]
+    timeout: 50
+
+#jobs: []
+
+git:
+  repository: "https://github.com/cg5labs/devops-scripts.git"
+  branch: main
+  credentialSecretName: ""
+  usernameSecretKey: username
+  tokenSecretKey: token
+
+audit:
+  enabled: false
+  database:
+    # Required when the bundled PostgreSQL subchart is disabled.
+    host: ""
+    port: 5432
+    name: scheduler
+    username: scheduler
+    passwordSecretName: ""
+    passwordSecretKey: password
+
+postgresql:
+  enabled: false
+  image:
+    repository: postgres
+    tag: "16"
+    pullPolicy: IfNotPresent
+  service:
+    port: 5432
+  auth:
+    username: scheduler
+    database: scheduler
+    password: ""
+    existingSecret: ""
+    existingSecretPasswordKey: password
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 8Gi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  resources: {}
+  # Optional raw postgresql.conf entries, for example: "max_connections = 100"
+  configuration: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# EmptyDir script checkout requires the non-root pod group to own mounted volumes.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+metrics:
+  enabled: true
+  path: /metrics
+
+nodeSelector: {}
+tolerations: []
+# Empty = prefer spreading replicas across nodes so a node failure leaves a standby.
+affinity: {}

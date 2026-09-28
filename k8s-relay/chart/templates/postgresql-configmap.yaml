@@ -1,0 +1,13 @@
+{{- if and .Values.postgresql.enabled .Values.postgresql.configuration }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "k8s-deployer.postgresqlConfigName" . }}
+  labels:
+    {{- include "k8s-deployer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+data:
+  postgresql.conf: |
+    listen_addresses = '*'
+{{ .Values.postgresql.configuration | trim | nindent 4 }}
+{{- end }}
